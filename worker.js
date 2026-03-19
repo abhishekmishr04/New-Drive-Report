@@ -1,37 +1,20 @@
 /**
  * DSR Dashboard — Cloudflare Worker (Backend Proxy)
- * ─────────────────────────────────────────────────
- * This worker authenticates with Google Drive using a Service Account
- * and proxies all Drive API calls. Frontend users need ZERO sign-in.
- *
- * Deploy this to Cloudflare Workers (free tier is enough).
- * Set these environment variables / secrets in Cloudflare dashboard:
- *
- *   SERVICE_ACCOUNT_EMAIL   → from your service account JSON
- *   SERVICE_ACCOUNT_KEY     → private_key from service account JSON (full PEM string)
- *   ALLOWED_ORIGIN          → your GitHub Pages URL e.g. https://yourname.github.io
  */
 
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 const DSR_FOLDER_NAME = "DSR Reports";
 
-// ── Cache folder ID in memory (survives Worker warm state) ──
 let cachedFolderId = null;
 let cachedToken = null;
 let tokenExpiry = 0;
 
-// ════════════════════════════════════════════════════
-// ENTRY POINT
-// ════════════════════════════════════════════════════
 export default {
-  async fetch(request, env) {
-    const origin = request.headers.get("Origin") || "";
-    const allowed = env.ALLOWED_ORIGIN || "";
+  async fetch(request) {
 
-    // CORS headers
     const cors = {
-      "Access-Control-Allow-Origin": allowed || "*",
+      "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
     };
@@ -44,27 +27,24 @@ export default {
     const path = url.pathname;
 
     try {
-      const token = await getAccessToken(env);
+      const token = await getAccessToken();
 
-      // ── Routes ──────────────────────────────────
       if (path === "/api/list" && request.method === "GET") {
-        return jsonResp(await listFiles(token, env), cors);
+        return jsonResp(await listFiles(token), cors);
       }
 
       if (path === "/api/save" && request.method === "POST") {
         const body = await request.json();
-        return jsonResp(await saveFile(token, body, env), cors);
+        return jsonResp(await saveFile(token, body), cors);
       }
 
       if (path === "/api/load" && request.method === "GET") {
         const fileId = url.searchParams.get("id");
-        if (!fileId) return jsonResp({ error: "Missing id" }, cors, 400);
         return jsonResp(await loadFile(token, fileId), cors);
       }
 
       if (path === "/api/delete" && request.method === "POST") {
         const { id } = await request.json();
-        if (!id) return jsonResp({ error: "Missing id" }, cors, 400);
         await deleteFile(token, id);
         return jsonResp({ ok: true }, cors);
       }
@@ -76,158 +56,185 @@ export default {
       return jsonResp({ error: "Not found" }, cors, 404);
 
     } catch (err) {
-      console.error(err);
       return jsonResp({ error: err.message }, cors, 500);
     }
   }
 };
 
-// ════════════════════════════════════════════════════
-// GOOGLE SERVICE ACCOUNT — JWT → Access Token
-// ════════════════════════════════════════════════════
-async function getAccessToken(env) {
+// ───────── TOKEN ─────────
+async function getAccessToken() {
   if (cachedToken && Date.now() < tokenExpiry - 30000) return cachedToken;
 
-  const email = env.SERVICE_ACCOUNT_EMAIL;
-  const rawKey = env.SERVICE_ACCOUNT_KEY;
+  const email = "dsr-bot@wise-resolver-490713-j6.iam.gserviceaccount.com";
 
-  if (!email || !rawKey) throw new Error("SERVICE_ACCOUNT_EMAIL or SERVICE_ACCOUNT_KEY not set");
+  const rawKey = `-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC9hVHMK8qsPvpJ
+s6wg2txk+Uy7uNh42lgLCsgCTI5aTEkDLc7fyj8rfPqcVhLa/CtCKfQnh3tSBcA2
+uIZczLCZrG2CHHIU05xVThFRre4k6pzyLmoYbTwBsBwHwocNqmFiem7GzVQIXZ90
+wLb2lnYWb3o9Wx7hiAJX257zLfC2HzaowwDnJS3h1VByP5d87KgtbxiS+9QsKgR7
+k5Bwip8mCnVN60LSVyoBf+QtQHCBZRqb0EqHrGUCGVHjkmdj80AeseTekpEplUsh
+gmpoW+jH1vc4OQsJrwnJokF3eYlea8bMW2ZxnHt4udZQoeb1rBGv8UmZ5nvJci9q
+UxxJ0YrHAgMBAAECggEAGA6XToJ0jJ7F6JsdC2KcvViD7ARPvi+BI42vy9Lp8v5h
++jxTWUbz89I+gZ/Pbuq5lwF6U5Y4CjZeqtOLgrYc6LThhbWUqZ4e5xksy6B3bUo2
+t+s6XnVnO5OeS0HfINXy3KxL6YJg21r/BbP8xZpdzQVDkAxEBD7ehUaEi7vWJVfi
+9cD0TX1VgQzWlobDjJEvWrOv+Fm6Ua8i7Ds667ks/JEq/xz0osH5Ar5wbcLE5QwZ
+jPqw5oZCsG5E1YTUkE0jp0qo8VNRSDtV6x/9jHbAXFo8ZaT+5ObFkxMHISEHmRAs
+KzLLddCBwLpLthT4u2PCGz9c/VatN6eQ1P2Yx+MnMQKBgQDpYzEmV62s2t0OlwMx
+SJcV+QwNtZFUGjk7Pq3XOo5NdW/9Itmd3uSZy+DFa7/5G7yp7WWc7mlWYuLh4dV4
+1CHwQi3XiDQzhPUCHFY5lKVIwodEpUwb+IwISazKk3yXignI7HhPF8VYsA7mkDeq
+pWFLghMEN3J3nx9Cv1Sji7V73wKBgQDP4hVgIc2jPCKFBcDX9jY/Jug0/evpHb5M
+wAQfWQCTHvsr3517+GIbX5T9k5UgKVfbtQaEFFFkBrvsHtwKcCFyMNLyWZd+D5Lk
+9pbMVuOe2SJA7uTLENbb5moGqCkcuWbogbkYv2w+eOcdaDLhfdoJoh0p4fyJ5PAJ
+PSb50fXOGQKBgDxmmHTE4kTHC8jX2lKp57gfETiHEgqDEua7TQBTvjpbt1T67PkH
+k4AeHJjbTv6oaAZOUyrvJMHfq7or2TSBKhtk9To/nMrskQAv1zzltHUFKz7fzLe8
+dnk6oAZ5bxhE+E1Qrb5Cd6eBQQn4rv9x96E0E7nWo8BDpTKAE+aTpK9fAoGBAKJs
+DbF3l9jzUjFG5n6WE5pSBtnoj1srbxU+bbokawuICE0mQUCsN9MVYi6iEcD4LHow
+PXATA+i4TjnVfqz1IVy8AwVxtKi8+FPGytnLBbuGAXpkbQSwGn/jznF3D/Aud9Yw
+DPPmFGfXRRQ35pFCKIqgTFL+C7ed1WISkpJcVsZ5AoGBAJmuklzwKQQRBsEak8ig
+vrAQop2zhrUcsjBbFkTUoj3W8VxUj62yLHKeumJz7K7WPaeFt6n4gCELfwrS8mWi
+zNlGYFo517dxj7xdPI0BUPsKjWydbek0fWhYCNQUMsq6kz7Qhr+iloiUtfiU7ZTj
+4OIgd60NfywbRLBVV/VVDXQc
+-----END PRIVATE KEY-----`;
 
-  // Build JWT
   const now = Math.floor(Date.now() / 1000);
+
   const header = b64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-  const claim  = b64url(JSON.stringify({
-    iss: email, scope: "https://www.googleapis.com/auth/drive",
+  const claim = b64url(JSON.stringify({
+    iss: email,
+    scope: "https://www.googleapis.com/auth/drive",
     aud: "https://oauth2.googleapis.com/token",
-    exp: now + 3600, iat: now
+    exp: now + 3600,
+    iat: now
   }));
 
   const sigInput = `${header}.${claim}`;
   const signature = await rsaSign(sigInput, rawKey);
   const jwt = `${sigInput}.${signature}`;
 
-  // Exchange JWT for access token
   const r = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`
+    body: `grant_type=urn%3Aietf%3Aparams%3Ajwt-bearer&assertion=${jwt}`
   });
+
   const data = await r.json();
-  if (!data.access_token) throw new Error("Token error: " + JSON.stringify(data));
 
   cachedToken = data.access_token;
-  tokenExpiry = Date.now() + (data.expires_in || 3600) * 1000;
+  tokenExpiry = Date.now() + data.expires_in * 1000;
+
   return cachedToken;
 }
 
-// ════════════════════════════════════════════════════
-// DRIVE OPERATIONS
-// ════════════════════════════════════════════════════
+// ───────── DRIVE FUNCTIONS ─────────
 async function ensureFolder(token) {
   if (cachedFolderId) return cachedFolderId;
 
-  // Search
-  const q = encodeURIComponent(`name='${DSR_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-  const r  = await driveGet(`${DRIVE_API}/files?q=${q}&fields=files(id)`, token);
-  if (r.files?.length) { cachedFolderId = r.files[0].id; return cachedFolderId; }
+  const q = encodeURIComponent(`name='DSR Reports' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const r = await driveGet(`${DRIVE_API}/files?q=${q}&fields=files(id)`, token);
 
-  // Create
-  const cr = await driveFetch(`${DRIVE_API}/files`, token, "POST",
-    { name: DSR_FOLDER_NAME, mimeType: "application/vnd.google-apps.folder" }
-  );
+  if (r.files?.length) {
+    cachedFolderId = r.files[0].id;
+    return cachedFolderId;
+  }
+
+  const cr = await driveFetch(`${DRIVE_API}/files`, token, "POST", {
+    name: "DSR Reports",
+    mimeType: "application/vnd.google-apps.folder"
+  });
+
   cachedFolderId = cr.id;
   return cachedFolderId;
 }
 
-async function listFiles(token, env) {
+async function listFiles(token) {
   const folderId = await ensureFolder(token);
-  const q = encodeURIComponent(`'${folderId}' in parents and mimeType='application/json' and trashed=false`);
-  return driveGet(`${DRIVE_API}/files?q=${q}&orderBy=modifiedTime+desc&fields=files(id,name,modifiedTime,size)&pageSize=100`, token);
+  const q = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
+  return driveGet(`${DRIVE_API}/files?q=${q}`, token);
 }
 
-async function saveFile(token, body, env) {
+async function saveFile(token, body) {
   const folderId = await ensureFolder(token);
-  const { fileName, data } = body;
-  if (!fileName || !data) throw new Error("Missing fileName or data");
 
-  const jsonStr  = JSON.stringify(data);
-  const metadata = { name: fileName, mimeType: "application/json", parents: [folderId] };
-  const boundary = "dsr_boundary_xyz987";
+  const metadata = {
+    name: body.fileName,
+    mimeType: "application/json",
+    parents: [folderId]
+  };
 
-  const multipart = [
-    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`,
-    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${jsonStr}\r\n`,
-    `--${boundary}--`
-  ].join("");
-
-  const r = await fetch(`${UPLOAD_API}/files?uploadType=multipart&fields=id,name`, {
+  const r = await fetch(`${UPLOAD_API}/files?uploadType=multipart`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": `multipart/related; boundary="${boundary}"`
-    },
-    body: multipart
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(metadata)
   });
+
   return r.json();
 }
 
-async function loadFile(token, fileId) {
-  const r = await fetch(`${DRIVE_API}/files/${fileId}?alt=media`, {
+async function loadFile(token, id) {
+  const r = await fetch(`${DRIVE_API}/files/${id}?alt=media`, {
     headers: { Authorization: `Bearer ${token}` }
   });
-  if (!r.ok) throw new Error(`Drive read error ${r.status}`);
   return r.json();
 }
 
-async function deleteFile(token, fileId) {
-  await fetch(`${DRIVE_API}/files/${fileId}`, {
+async function deleteFile(token, id) {
+  await fetch(`${DRIVE_API}/files/${id}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` }
   });
 }
 
-// ════════════════════════════════════════════════════
-// LOW-LEVEL HELPERS
-// ════════════════════════════════════════════════════
+// ───────── HELPERS ─────────
 async function driveGet(url, token) {
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  const r = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
   return r.json();
 }
 
 async function driveFetch(url, token, method, body) {
   const r = await fetch(url, {
     method,
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
     body: JSON.stringify(body)
   });
   return r.json();
 }
 
 function b64url(str) {
-  return btoa(unescape(encodeURIComponent(str)))
-    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+  return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
 
-async function rsaSign(input, pemKey) {
-  // Clean PEM
-  const pem = pemKey.replace(/-----[^-]+-----/g, "").replace(/\s/g, "");
-  const keyData = Uint8Array.from(atob(pem), c => c.charCodeAt(0));
+async function rsaSign(input, key) {
+  const pem = key.replace(/-----[^-]+-----/g, "").replace(/\s/g, "");
+  const binary = Uint8Array.from(atob(pem), c => c.charCodeAt(0));
 
-  const key = await crypto.subtle.importKey(
-    "pkcs8", keyData.buffer,
+  const cryptoKey = await crypto.subtle.importKey(
+    "pkcs8",
+    binary.buffer,
     { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-    false, ["sign"]
+    false,
+    ["sign"]
   );
 
-  const encoded = new TextEncoder().encode(input);
-  const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, encoded);
-  return btoa(String.fromCharCode(...new Uint8Array(sig)))
-    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    cryptoKey,
+    new TextEncoder().encode(input)
+  );
+
+  return btoa(String.fromCharCode(...new Uint8Array(signature)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=/g, "");
 }
 
-function jsonResp(data, corsHeaders, status = 200) {
+function jsonResp(data, cors, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", ...corsHeaders }
+    headers: { "Content-Type": "application/json", ...cors }
   });
 }
