@@ -630,7 +630,7 @@ async function loadFromDrive(fileId, fileName) {
     closeDriveModal();
 
     document.getElementById('uploadScreen').style.display='none';
-    document.getElementById('reportScreen').style.display='';
+    document.getElementById('reportScreen').style.display='block';
     setDriveChip('ok', `Loaded: ${fileName}`);
     toast('✓ Report loaded from team Drive', 'ok');
 
@@ -707,16 +707,35 @@ function handleFile(file) {
 }
 
 function parseWorkbook(wb) {
+  // DEBUG: log all sheet names
+  console.log('All sheets:', wb.SheetNames);
+  
   const dsrName = wb.SheetNames.find(n => n.trim().toUpperCase()==='DSR');
-  if (!dsrName) { toast('No "DSR" sheet!','err'); showLoading(false); return; }
+  if (!dsrName) {
+    const names = wb.SheetNames.join(' | ');
+    toast('No DSR sheet! Found: ' + names, 'err');
+    console.error('Sheet names in file:', wb.SheetNames);
+    showLoading(false);
+    return;
+  }
+
   const rows = XLSX.utils.sheet_to_json(wb.Sheets[dsrName],{header:1,defval:null,raw:true});
+  console.log('Total rows:', rows.length);
+  console.log('Row 0:', JSON.stringify(rows[0]));
+  console.log('Row 3:', JSON.stringify(rows[3]));
+  console.log('Row 5:', JSON.stringify(rows[5]));
+
   const sumRow=rows[0], hdrRow=rows[3];
   DAYS_ELAPSED = Math.round(nv(sumRow[7]))||1;
   SELECTED_DAY = DAYS_ELAPSED;
   MONTH_LABEL  = String(hdrRow[9]||'').replace(/tgt|target/gi,'').trim()||'This Month';
   LAST_MONTH_LBL = prevMonth(MONTH_LABEL, CURRENT_FILE);
+  
+  console.log('Days elapsed:', DAYS_ELAPSED, 'Month:', MONTH_LABEL);
   updateDayLabels();
+  
   PARSED_DATA = {};
+  let parsedRows = 0;
   for (let i=5;i<rows.length;i++) {
     const row=rows[i],resp=row[C_RESP],portal=row[C_PORTAL],seller=row[C_SELLER];
     if (!resp||!seller) continue;
@@ -728,14 +747,40 @@ function parseWorkbook(wb) {
     DAY_COLS.forEach((col,idx)=>{ d.portals[pk].dailySales[idx]+=col<row.length?nv(row[col]):0; });
     d.portals[pk].lm+=nv(row[C_LM]); d.portals[pk].stgt+=nv(row[C_STGT]);
     d.totals.lm+=nv(row[C_LM]); d.totals.stgt+=nv(row[C_STGT]);
+    parsedRows++;
   }
+  
+  console.log('Brands found:', Object.keys(PARSED_DATA));
+  console.log('Parsed rows:', parsedRows);
+
+  const brandCount = Object.keys(PARSED_DATA).length;
+  if (brandCount === 0) {
+    toast('DSR sheet found but 0 brands detected! Open F12 Console for details.', 'err');
+    console.error('C_RESP=', C_RESP, 'C_PORTAL=', C_PORTAL, 'C_SELLER=', C_SELLER);
+    console.error('Sample row 5:', rows[5]);
+    console.error('Sample row 6:', rows[6]);
+    showLoading(false);
+    return;
+  }
+
   populateBrandDD(); enableNav();
   document.getElementById('uploadScreen').style.display='none';
-  document.getElementById('reportScreen').style.display='';
+  document.getElementById('reportScreen').style.display='block';
   showLoading(false);
-  toast(`Loaded ${Object.keys(PARSED_DATA).length} brands`,'ok');
+  toast('Loaded ' + brandCount + ' brands successfully!','ok');
   if (DRIVE_OK) saveToDrive(true).then(()=>loadHistoryPanel());
   else toast('Drive not connected — report not saved','info');
+
+  // Auto-select first brand if only one, otherwise prompt
+  const brands = Object.keys(PARSED_DATA);
+  if (brands.length === 1) {
+    document.getElementById('rBrand').value = brands[0];
+    generateReport();
+  } else {
+    // scroll to brand selector
+    document.getElementById('rBrand').focus();
+    toast('Select a brand from the dropdown to generate report', 'info');
+  }
 }
 
 function populateBrandDD() {
