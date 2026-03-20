@@ -12,10 +12,9 @@ let tokenExpiry = 0;
 
 export default {
   async fetch(request) {
-
     const cors = {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS, DELETE",
       "Access-Control-Allow-Headers": "Content-Type",
     };
 
@@ -44,8 +43,8 @@ export default {
       }
 
       if (path === "/api/delete" && request.method === "POST") {
-        const { id } = await request.json();
-        await deleteFile(token, id);
+        const body = await request.json();
+        await deleteFile(token, body.id);
         return jsonResp({ ok: true }, cors);
       }
 
@@ -54,46 +53,48 @@ export default {
       }
 
       return jsonResp({ error: "Not found" }, cors, 404);
-
     } catch (err) {
+      console.error("Worker error:", err);
       return jsonResp({ error: err.message }, cors, 500);
     }
   }
 };
 
-// ───────── TOKEN ─────────
+// ───────── TOKEN MANAGEMENT ─────────
 async function getAccessToken() {
-  if (cachedToken && Date.now() < tokenExpiry - 30000) return cachedToken;
+  // Check if cached token is still valid (with 5 min buffer)
+  if (cachedToken && Date.now() < tokenExpiry - 300000) {
+    return cachedToken;
+  }
 
-  const email = "dsr-bot@wise-resolver-490713-j6.iam.gserviceaccount.com";
-
+  const email = "dsr-report@dsr-dashboard-490713.iam.gserviceaccount.com";
   const rawKey = `-----BEGIN PRIVATE KEY-----
-MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC9hVHMK8qsPvpJ
-s6wg2txk+Uy7uNh42lgLCsgCTI5aTEkDLc7fyj8rfPqcVhLa/CtCKfQnh3tSBcA2
-uIZczLCZrG2CHHIU05xVThFRre4k6pzyLmoYbTwBsBwHwocNqmFiem7GzVQIXZ90
-wLb2lnYWb3o9Wx7hiAJX257zLfC2HzaowwDnJS3h1VByP5d87KgtbxiS+9QsKgR7
-k5Bwip8mCnVN60LSVyoBf+QtQHCBZRqb0EqHrGUCGVHjkmdj80AeseTekpEplUsh
-gmpoW+jH1vc4OQsJrwnJokF3eYlea8bMW2ZxnHt4udZQoeb1rBGv8UmZ5nvJci9q
-UxxJ0YrHAgMBAAECggEAGA6XToJ0jJ7F6JsdC2KcvViD7ARPvi+BI42vy9Lp8v5h
-+jxTWUbz89I+gZ/Pbuq5lwF6U5Y4CjZeqtOLgrYc6LThhbWUqZ4e5xksy6B3bUo2
-t+s6XnVnO5OeS0HfINXy3KxL6YJg21r/BbP8xZpdzQVDkAxEBD7ehUaEi7vWJVfi
-9cD0TX1VgQzWlobDjJEvWrOv+Fm6Ua8i7Ds667ks/JEq/xz0osH5Ar5wbcLE5QwZ
-jPqw5oZCsG5E1YTUkE0jp0qo8VNRSDtV6x/9jHbAXFo8ZaT+5ObFkxMHISEHmRAs
-KzLLddCBwLpLthT4u2PCGz9c/VatN6eQ1P2Yx+MnMQKBgQDpYzEmV62s2t0OlwMx
-SJcV+QwNtZFUGjk7Pq3XOo5NdW/9Itmd3uSZy+DFa7/5G7yp7WWc7mlWYuLh4dV4
-1CHwQi3XiDQzhPUCHFY5lKVIwodEpUwb+IwISazKk3yXignI7HhPF8VYsA7mkDeq
-pWFLghMEN3J3nx9Cv1Sji7V73wKBgQDP4hVgIc2jPCKFBcDX9jY/Jug0/evpHb5M
-wAQfWQCTHvsr3517+GIbX5T9k5UgKVfbtQaEFFFkBrvsHtwKcCFyMNLyWZd+D5Lk
-9pbMVuOe2SJA7uTLENbb5moGqCkcuWbogbkYv2w+eOcdaDLhfdoJoh0p4fyJ5PAJ
-PSb50fXOGQKBgDxmmHTE4kTHC8jX2lKp57gfETiHEgqDEua7TQBTvjpbt1T67PkH
-k4AeHJjbTv6oaAZOUyrvJMHfq7or2TSBKhtk9To/nMrskQAv1zzltHUFKz7fzLe8
-dnk6oAZ5bxhE+E1Qrb5Cd6eBQQn4rv9x96E0E7nWo8BDpTKAE+aTpK9fAoGBAKJs
-DbF3l9jzUjFG5n6WE5pSBtnoj1srbxU+bbokawuICE0mQUCsN9MVYi6iEcD4LHow
-PXATA+i4TjnVfqz1IVy8AwVxtKi8+FPGytnLBbuGAXpkbQSwGn/jznF3D/Aud9Yw
-DPPmFGfXRRQ35pFCKIqgTFL+C7ed1WISkpJcVsZ5AoGBAJmuklzwKQQRBsEak8ig
-vrAQop2zhrUcsjBbFkTUoj3W8VxUj62yLHKeumJz7K7WPaeFt6n4gCELfwrS8mWi
-zNlGYFo517dxj7xdPI0BUPsKjWydbek0fWhYCNQUMsq6kz7Qhr+iloiUtfiU7ZTj
-4OIgd60NfywbRLBVV/VVDXQc
+MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCroEd98My4BXwI
+qklkXESDdRqeBUkU+acVjIEoRrRgo3vYgrNddtRTrGPw1DX+tV4J+mN/TADGx9BT
+1d4K+zlqIhV54OsFJ1acR1x68B9Rm36NdMnmHwUnqinfgnHBidgfqRj9n10DlIQg
+0VpDlHRumdSvAZfxgYzqRfU2d2JHXWtg/nf3IZPv088HlD+E5PySJXBJFrLIj8dU
+L0qP2RJcTxV5qaqTIM1YZSGNpXLnGkZPJTA+tOwtfx72sJ2mtYeZ/etsfqyT3I2T
+tmBz03W4j1adt4m4tPJw/LSQjFUkh2GQDDe2b3Ah7YwAq7vjKrlNaVMMqAw45VnO
+Xh8tkOi/AgMBAAECggEAA9dyGVUSkOglL/0iBN3LLwc2LHqL62XiggyxzIVFhgDo
+IgnOBTl/TxPwQzEGm7ZTA0PUsRdc0GuU5XcOqOpgjTvlTCruR8syH+/yiUPt6xc2
+blq0Q1aqv3u1GMqdE5IAz9QqpKXJ7u1N1H2OtUn8czLgZsxtnE0c//ockNpDItgZ
+cvs4Sp4oyE1CBem50b8nTQOG+aO3jALuO/R73tmoOE31EIBX9bN61Jq8xOKpHNEX
+cMR+NjN76XBAJ/2xTXUR4cHN/wHfR1ijLOmL6zYDYU+yt+UzYSAaMFEiCGXtTghF
+jJaG1VCs4NXLUHM0xMLZXZBBIIe+kdC5lzn28mHA1QKBgQDisv8yOGtnVM3bpVmY
+oE2ON5yVUON2yPRweZWjJW/NFk/wTClqkokjJOM+UQ700Jse6+J3WVOB8mpQ6CMX
+42/Td9hHvxCErqCo4SD2Hg7TiaTQ6Uosmx5KkC4jypbt8HC0FciGiKeAfxVrfBUF
+mSCajJ+OlXWK1+hyMlnuhbrehQKBgQDBzwcvPeal3o/sc3FohOy4dpBrY2KU+rR5
+g7uHtmMclHecWQxVA3kF0LFCwEeJJO+Xht9tpbUfVvcXmcqoQtCL8ECdksC80DhI
+cTClAPoEt2jxD+VBGRBmomHIg85YRTda/J8kAaqpbBDTwfmJAktdnLiBhP8aj60/
+G1ez6m0XcwKBgH0E1bOuZZzQqc5Nu8Ft9hdOF+5Ic4jYfeVhR+J3DNb/TQpqFhUN
+xs840pFVRnhAaqt8zqGfA2yQcY0419GevdbTKtU2SzfAzh0UOodAQFDsgZYscZlz
+2hqotKlMWjvR83V85d87kZRNgVSLU1SJA+/3SS7qwa3WL/x6RBpEaa+5AoGALJVX
+bcKroFSGfzo/SG/rlLORnWKLdwIFKj7nkNygCB8PNOQ3NgdKe8/6NwTMb/wTMaRR
+GYQZGlCDHua9+98C4m4uLxFnTQgJKoD/U7XZzePzPCEP992wLCwGmn3Xpe6mQUQD
+x+CqRbcaV9wzbxUcCTjYKNNTa+TJUc8UacrvtYkCgYB4kZBrr89TtgSe66a/X4ic
+amdErm5fjJeysvk9XxmI40s/ThTi5a+Y5A3wJh6nyM/XkaBVktPrEKRX5msPMyQ9
+hbkQ3m0nybhnFL89jSYyd1h5RXHg5AVQb43cvrzZgq84XgZq8uDLn9rCV55H2ORz
+IReCbU0WyDbUwPM7e/YZig==
 -----END PRIVATE KEY-----`;
 
   const now = Math.floor(Date.now() / 1000);
@@ -114,42 +115,61 @@ zNlGYFo517dxj7xdPI0BUPsKjWydbek0fWhYCNQUMsq6kz7Qhr+iloiUtfiU7ZTj
   const r = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: `grant_type=urn%3Aietf%3Aparams%3Ajwt-bearer&assertion=${jwt}`
+    body: `grant_type=urn%3Aietf%3Aparams%3Ajwt-bearer&assertion=${encodeURIComponent(jwt)}`
   });
 
+  if (!r.ok) {
+    const errData = await r.json();
+    throw new Error(`Token error: ${errData.error_description || errData.error}`);
+  }
+
   const data = await r.json();
-
   cachedToken = data.access_token;
-  tokenExpiry = Date.now() + data.expires_in * 1000;
+  tokenExpiry = Date.now() + (data.expires_in - 60) * 1000; // 60s buffer
 
+  console.log("Token acquired, expires in:", data.expires_in, "seconds");
   return cachedToken;
 }
 
-// ───────── DRIVE FUNCTIONS ─────────
+// ───────── DRIVE OPERATIONS ─────────
 async function ensureFolder(token) {
   if (cachedFolderId) return cachedFolderId;
 
-  const q = encodeURIComponent(`name='DSR Reports' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-  const r = await driveGet(`${DRIVE_API}/files?q=${q}&fields=files(id)`, token);
+  const q = encodeURIComponent(
+    `name='${DSR_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`
+  );
+  
+  const r = await driveGet(
+    `${DRIVE_API}/files?q=${q}&spaces=drive&fields=files(id,name)`,
+    token
+  );
 
   if (r.files?.length) {
     cachedFolderId = r.files[0].id;
+    console.log("Found existing DSR Reports folder:", cachedFolderId);
     return cachedFolderId;
   }
 
-  const cr = await driveFetch(`${DRIVE_API}/files`, token, "POST", {
-    name: "DSR Reports",
+  console.log("Creating new DSR Reports folder...");
+  const createResp = await driveFetch(`${DRIVE_API}/files`, token, "POST", {
+    name: DSR_FOLDER_NAME,
     mimeType: "application/vnd.google-apps.folder"
   });
 
-  cachedFolderId = cr.id;
+  cachedFolderId = createResp.id;
+  console.log("Created new folder:", cachedFolderId);
   return cachedFolderId;
 }
 
 async function listFiles(token) {
   const folderId = await ensureFolder(token);
   const q = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
-  return driveGet(`${DRIVE_API}/files?q=${q}`, token);
+  const result = await driveGet(
+    `${DRIVE_API}/files?q=${q}&spaces=drive&fields=files(id,name,modifiedTime,size)&pageSize=100&orderBy=modifiedTime desc`,
+    token
+  );
+  console.log("Listed files:", result.files?.length || 0);
+  return result;
 }
 
 async function saveFile(token, body) {
@@ -161,27 +181,70 @@ async function saveFile(token, body) {
     parents: [folderId]
   };
 
+  // Create multipart body
+  const boundary = "===============7330845974216740156==";
+  const metadataStr = JSON.stringify(metadata);
+  const fileContent = JSON.stringify(body.data);
+
+  const multipartBody = 
+    `--${boundary}\r\n` +
+    `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+    `${metadataStr}\r\n` +
+    `--${boundary}\r\n` +
+    `Content-Type: application/json\r\n\r\n` +
+    `${fileContent}\r\n` +
+    `--${boundary}--`;
+
+  console.log("Uploading file:", body.fileName, "size:", fileContent.length);
+
   const r = await fetch(`${UPLOAD_API}/files?uploadType=multipart`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify(metadata)
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": `multipart/related; boundary="${boundary}"`
+    },
+    body: multipartBody
   });
 
-  return r.json();
+  if (!r.ok) {
+    const errText = await r.text();
+    console.error("Upload error:", r.status, errText);
+    throw new Error(`Save failed: ${r.status} - ${errText}`);
+  }
+
+  const result = await r.json();
+  console.log("File saved:", result.id);
+  return { id: result.id, name: result.name, success: true };
 }
 
-async function loadFile(token, id) {
-  const r = await fetch(`${DRIVE_API}/files/${id}?alt=media`, {
+async function loadFile(token, fileId) {
+  if (!fileId) throw new Error("No file ID provided");
+  
+  console.log("Loading file:", fileId);
+  const r = await fetch(`${DRIVE_API}/files/${fileId}?alt=media`, {
     headers: { Authorization: `Bearer ${token}` }
   });
+
+  if (!r.ok) {
+    throw new Error(`Load failed: ${r.status}`);
+  }
+
   return r.json();
 }
 
-async function deleteFile(token, id) {
-  await fetch(`${DRIVE_API}/files/${id}`, {
+async function deleteFile(token, fileId) {
+  if (!fileId) throw new Error("No file ID provided");
+  
+  console.log("Deleting file:", fileId);
+  const r = await fetch(`${DRIVE_API}/files/${fileId}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` }
   });
+
+  if (!r.ok && r.status !== 204) {
+    throw new Error(`Delete failed: ${r.status}`);
+  }
+  console.log("File deleted");
 }
 
 // ───────── HELPERS ─────────
@@ -189,6 +252,13 @@ async function driveGet(url, token) {
   const r = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` }
   });
+
+  if (!r.ok) {
+    const errText = await r.text();
+    console.error("GET error:", r.status, errText);
+    throw new Error(`Drive API error: ${r.status} - ${errText}`);
+  }
+
   return r.json();
 }
 
@@ -201,15 +271,28 @@ async function driveFetch(url, token, method, body) {
     },
     body: JSON.stringify(body)
   });
+
+  if (!r.ok) {
+    const errText = await r.text();
+    console.error("Fetch error:", r.status, errText);
+    throw new Error(`Drive API error: ${r.status} - ${errText}`);
+  }
+
   return r.json();
 }
 
 function b64url(str) {
-  return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+  return btoa(str)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=/g, "");
 }
 
 async function rsaSign(input, key) {
-  const pem = key.replace(/-----[^-]+-----/g, "").replace(/\s/g, "");
+  const pem = key
+    .replace(/-----[^-]+-----/g, "")
+    .replace(/\s/g, "");
+
   const binary = Uint8Array.from(atob(pem), c => c.charCodeAt(0));
 
   const cryptoKey = await crypto.subtle.importKey(
@@ -235,6 +318,9 @@ async function rsaSign(input, key) {
 function jsonResp(data, cors, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", ...cors }
+    headers: {
+      "Content-Type": "application/json",
+      ...cors
+    }
   });
 }
